@@ -6,14 +6,19 @@ import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import express from 'express'
 import { WebSocketServer } from 'ws'
+import * as sea from 'node:sea'
+import { spawn } from 'node:child_process'
 import { createYjsServer, ROOM_RE } from './yjs-server.js'
 import { aiEnabled, generateBlueprint, AI_MODEL } from './ai.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(here, '..')
+/** true quando l'app gira come eseguibile autonomo (client incluso nel file). */
+const IS_SEA = (() => { try { return sea.isSea() } catch { return false } })()
 const PORT = Number(process.env.PORT || 3000)
 const HOST = process.env.HOST || '0.0.0.0'
-const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(root, 'data'))
+// Come eseguibile i dati stanno in una cartella "data" accanto al file, così si può spostare/copiare/fare backup.
+const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(IS_SEA ? path.dirname(process.execPath) : root, 'data'))
 const DIST = path.join(root, 'dist')
 /** Se impostata, tutti i client devono fornire questa password per sincronizzare e usare l'AI. */
 const APP_PASSWORD = process.env.APP_PASSWORD || ''
@@ -65,13 +70,30 @@ app.post('/api/ai/blueprint', aiRateLimit, async (req, res) => {
   }
 })
 
-if (fs.existsSync(DIST)) {
-  app.use(express.static(DIST, {
-    setHeaders(res, file) {
-      if (file.endsWith('sw.js') || file.endsWith('.html') || file.endsWith('precache.json')) res.setHeader('Cache-Control', 'no-cache')
-      else if (file.includes(`${path.sep}assets${path.sep}`)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
-    },
-  }))
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml',
+  '.png': 'image/png', '.ico': 'image/x-icon', '.map': 'application/json',
+}
+const cacheFor = (file) => (/(^|\/)(sw\.js|index\.html|precache\.json)$/.test(file) ? 'no-cache' : file.includes('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache')
+
+if (IS_SEA) {
+  // Client incluso nell'eseguibile: tutti i file stanno in un unico asset JSON { "/percorso": "base64" }.
+  const files = new Map(Object.entries(JSON.parse(sea.getAsset('bundle.json', 'utf8'))).map(([k, v]) => [k, Buffer.from(v, 'base64')]))
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next()
+    if (req.path.startsWith('/api/') || req.path.startsWith('/sync/')) return next()
+    let file = req.path === '/' ? '/index.html' : req.path
+    let body = files.get(file)
+    if (!body) {
+      if (path.extname(file)) return next() // file statico inesistente
+      file = '/index.html' // route dell'app (SPA)
+      body = files.get(file)
+    }
+    res.type(MIME[path.extname(file)] || 'application/octet-stream').set('Cache-Control', cacheFor(file)).send(body)
+  })
+} else if (fs.existsSync(DIST)) {
+  app.use(express.static(DIST, { setHeaders: (res, file) => res.setHeader('Cache-Control', cacheFor(file.split(path.sep).join('/'))) }))
   app.get(/^\/(?!api\/|sync\/).*/, (_req, res) => res.sendFile(path.join(DIST, 'index.html')))
 } else {
   app.get('/', (_req, res) => res.type('text/plain').send('Client non compilato. Esegui "npm run build" oppure "npm run dev" (http://localhost:5173).'))
@@ -101,12 +123,30 @@ const shutdown = () => { yjs.flushAll(); process.exit(0) }
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
 
-server.listen(PORT, HOST, () => {
+function openBrowser(url) {
+  const [cmd, args] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]]
+  try { spawn(cmd, args, { stdio: 'ignore', detached: true }).on('error', () => {}).unref() } catch { /* nessun browser: l'indirizzo è comunque stampato */ }
+}
+
+function onListening(port) {
   const lan = lanAddresses()
   console.log(`\n  Notion Clone in ascolto`)
-  console.log(`  Locale:   http://localhost:${PORT}`)
-  for (const ip of lan) console.log(`  Rete LAN: http://${ip}:${PORT}   (collega telefono e colleghi sulla stessa Wi-Fi)`)
+  console.log(`  Locale:   http://localhost:${port}`)
+  for (const ip of lan) console.log(`  Rete LAN: http://${ip}:${port}   (collega telefono e colleghi sulla stessa Wi-Fi)`)
   console.log(`  Dati:     ${DATA_DIR}`)
   console.log(`  Password: ${APP_PASSWORD ? 'attiva' : 'non impostata (imposta APP_PASSWORD se esponi il server su internet)'}`)
-  console.log(`  AI:       ${aiEnabled() ? `Claude (${AI_MODEL})` : 'non configurata (assistente locale offline)'}\n`)
-})
+  console.log(`  AI:       ${aiEnabled() ? `Claude (${AI_MODEL})` : 'non configurata (assistente locale offline)'}`)
+  if (IS_SEA) console.log('\n  Lascia aperta questa finestra mentre lavori. Premi Ctrl+C per chiudere.')
+  console.log('')
+  if (IS_SEA && !process.env.NO_BROWSER) openBrowser(`http://localhost:${port}`)
+}
+
+// Come eseguibile, se la porta è occupata (es. un'altra copia già aperta) prova le successive.
+function listen(port, attemptsLeft) {
+  server.once('error', (err) => {
+    if (err.code === 'EADDRINUSE' && IS_SEA && !process.env.PORT && attemptsLeft > 0) listen(port + 1, attemptsLeft - 1)
+    else { console.error(`Impossibile avviare il server sulla porta ${port}: ${err.message}`); process.exit(1) }
+  })
+  server.listen(port, HOST, () => { server.removeAllListeners('error'); onListening(port) })
+}
+listen(PORT, 20)

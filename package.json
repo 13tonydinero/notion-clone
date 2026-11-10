@@ -9,10 +9,12 @@
     "build": "tsc --noEmit && vite build",
     "start": "node server/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test \"tests/*.test.mjs\""
+    "test": "node --import tsx --test \"tests/*.test.mjs\"",
+    "package": "node scripts/build-executable.mjs",
+    "package:archives": "bash scripts/make-archives.sh"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.12"
   },
   "license": "MIT",
   "dependencies": {
@@ -52,6 +54,8 @@
     "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^6.1.1",
     "concurrently": "^10.0.5",
+    "esbuild": "^0.28.2",
+    "postject": "^1.0.0-alpha.6",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.1"

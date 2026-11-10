@@ -17,7 +17,7 @@ Un clone di Notion che funziona **in locale, in rete e nel cloud**, pensato per 
 
 ## Avvio rapido (locale)
 
-Richiede Node.js 20+ (22 consigliato).
+Richiede Node.js 20.12+ (22 consigliato). Se preferisci non installare nulla, usa la [versione eseguibile](#versione-eseguibile-un-solo-file-senza-installare-nulla).
 
 ```bash
 npm install
@@ -28,6 +28,21 @@ npm start          # http://localhost:3000
 Apri http://localhost:3000, scrivi il tuo nome in **Impostazioni** e prova l'assistente dalla schermata iniziale. I dati dei documenti vengono salvati anche sul server nella cartella `data/`.
 
 Sviluppo con ricarica automatica: `npm run dev` (client su http://localhost:5173, server su :3000).
+
+## Versione eseguibile (un solo file, senza installare nulla)
+
+L'app può essere impacchettata in un **unico file eseguibile** che contiene runtime Node, server e client: si avvia con un doppio clic, apre il browser e salva i dati in una cartella `data/` accanto al file. Se la porta 3000 è occupata ne usa una libera.
+
+```bash
+npm install
+npm run package                        # eseguibile per il sistema su cui sei → release/
+npm run package -- --target all        # Linux, macOS (Intel/Apple Silicon) e Windows, anche da Linux
+npm run package:archives               # crea gli archivi .zip/.tar.gz con le istruzioni di primo avvio
+```
+
+Targets: `linux-x64 linux-arm64 darwin-x64 darwin-arm64 win-x64`. In alternativa il workflow GitHub Actions *Eseguibili* (`.github/workflows/executables.yml`) compila i binari nativi per ogni sistema.
+
+Note sul primo avvio: su **Windows** compare l'avviso SmartScreen (il programma non è firmato: *Ulteriori informazioni → Esegui comunque*); su **macOS** i binari compilati da un altro sistema vanno firmati localmente (`codesign --sign - file`, lo fa lo script *Avvia Notion Clone.command* incluso negli archivi). Opzioni da variabili d'ambiente: `PORT`, `APP_PASSWORD`, `NO_BROWSER=1`, `DATA_DIR`, `ANTHROPIC_API_KEY`.
 
 ## Lavorare con un collega
 
